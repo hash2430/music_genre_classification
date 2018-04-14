@@ -21,6 +21,25 @@ from torch.optim import lr_scheduler
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.enabled = True
 
+# data loader
+class gtzandata(Dataset):
+    def __init__(self,x,y):
+        self.x = x
+        self.y = y
+
+    def __getitem__(self,index):
+
+        # todo : random cropping audio to 3-second
+        #start = random.randint(0,self.x[index].shape[1] - num_frames)
+        #mel = self.x[index][:,start:start+num_frames]
+        mel = self.x[index]
+
+        entry = {'mel': mel, 'label': self.y[index]}
+
+        return entry
+
+    def __len__(self):
+        return self.x.shape[0]
 
 # options
 melBins = 128
@@ -29,7 +48,7 @@ frames = int(29.9*22050.0/hop)
 batch_size = 5
 learning_rate = 0.01
 num_epochs = 50
-num_frames = 120
+num_frames = 120 # frames랑 num_frames랑 차이가 뭐지?
 
 # A location where labels and features are located
 label_path = './gtzan/'
@@ -53,16 +72,24 @@ with open(label_path + 'test_filtered.txt') as f:
 
 
 # labels
-genres = list(set(y_train_dict.values()+y_valid_dict.values()+y_test_dict.values()))
+genre_set1 = set(y_train_dict.values())
+genre_set2 = set(y_valid_dict.values())
+genre_set3 = set(y_test_dict.values())
+genres = genre_set1 | genre_set2 | genre_set3
+genres = list(genres)
 print(genres)
+
+# why do you do this? It semms like there's no point doing this.
 for iter in range(len(y_train_dict)):
     for iter2 in range(len(genres)):
         if genres[iter2] == y_train_dict[train_list[iter]]:
             y_train_dict[train_list[iter]] = iter2
+
 for iter in range(len(y_valid_dict)):
     for iter2 in range(len(genres)):
         if genres[iter2] == y_valid_dict[valid_list[iter]]:
             y_valid_dict[valid_list[iter]] = iter2
+
 for iter in range(len(y_test_dict)):
     for iter2 in range(len(genres)):
         if genres[iter2] == y_test_dict[test_list[iter]]:
@@ -72,8 +99,8 @@ for iter in range(len(y_test_dict)):
 mel_path = './gtzan_mel/'
 
 # load data
-x_train = np.zeros((len(train_list),melBins,frames))
-y_train = np.zeros((len(train_list),))
+x_train = np.zeros((len(train_list),melBins,frames)) #3D ndarray
+y_train = np.zeros((len(train_list),)) #1D
 for iter in range(len(train_list)):
     x_train[iter] = np.load(mel_path + train_list[iter].replace('.wav','.npy'))
     y_train[iter] = y_train_dict[train_list[iter]]
@@ -102,25 +129,7 @@ x_valid /= std
 x_test -= mean
 x_test /= std
 
-# data loader
-class gtzandata(Dataset):
-    def __init__(self,x,y):
-        self.x = x
-        self.y = y
 
-    def __getitem__(self,index):
-
-        # todo : random cropping audio to 3-second
-        #start = random.randint(0,self.x[index].shape[1] - num_frames)
-        #mel = self.x[index][:,start:start+num_frames]
-        mel = self.x[index]
-
-        entry = {'mel': mel, 'label': self.y[index]}
-
-        return entry
-
-    def __len__(self):
-        return self.x.shape[0]
 
 
 print(x_train.shape,y_train.shape)
@@ -179,12 +188,6 @@ class model_1DCNN(nn.Module):
         #out = self.activation(out)
 
         return out
-
-# load model
-model = model_1DCNN()
-
-# training
-criterion = nn.CrossEntropyLoss()
 
 # train / eval
 def fit(model,train_loader,valid_loader,criterion,learning_rate,num_epochs):
@@ -250,9 +253,14 @@ def eval(model,valid_loader,criterion):
 
     return avg_loss, output_all, label_all
 
+# load model
+model = model_1DCNN()
+
+# training
+criterion = nn.CrossEntropyLoss()
+
 # run
 fit(model,train_loader,valid_loader,criterion,learning_rate,num_epochs)
-
 
 # evaluation
 avg_loss, output_all, label_all = eval(model,test_loader,criterion)
