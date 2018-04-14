@@ -13,33 +13,15 @@ import random
 
 import torch
 from torch.utils.data import DataLoader
-from torch.utils.data import Dataset
+
 import torch.nn as nn
 from torch.autograd import Variable
 from torch.optim import lr_scheduler
 
+import Baseline.model as model
+from Baseline.gtzandata import gtzandata
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.enabled = True
-
-# data loader
-class gtzandata(Dataset):
-    def __init__(self,x,y):
-        self.x = x
-        self.y = y
-
-    def __getitem__(self,index):
-
-        # todo : random cropping audio to 3-second
-        #start = random.randint(0,self.x[index].shape[1] - num_frames)
-        #mel = self.x[index][:,start:start+num_frames]
-        mel = self.x[index]
-
-        entry = {'mel': mel, 'label': self.y[index]}
-
-        return entry
-
-    def __len__(self):
-        return self.x.shape[0]
 
 # options
 melBins = 128
@@ -52,6 +34,70 @@ num_frames = 120 # frames랑 num_frames랑 차이가 뭐지?
 
 # A location where labels and features are located
 label_path = './gtzan/'
+
+# train / eval
+def fit(model,train_loader,valid_loader,criterion,learning_rate,num_epochs):
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=1e-6, momentum=0.9, nesterov=True)
+    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=3, verbose=True)
+
+    for epoch in range(num_epochs):
+        model.train()
+        acc = []
+
+        for i, data in enumerate(train_loader):
+            audio = data['mel']
+            label = data['label']
+            # have to convert to an autograd.Variable type in order to keep track of the gradient...
+            audio = Variable(audio).type(torch.FloatTensor)
+            label = Variable(label).type(torch.LongTensor)
+
+            optimizer.zero_grad()
+            outputs = model(audio)
+
+            #print(outputs,label)
+
+            loss = criterion(outputs, label)
+            loss.backward()
+            optimizer.step()
+
+            if (i+1) % 10 == 0:
+                print ("Epoch [%d/%d], Iter [%d/%d] loss : %.4f" % (epoch+1, num_epochs, i+1, len(train_loader), loss.data[0]))
+        # After learning each epoch, try evaluating the model with validation set
+        # if evaluation accuracy suggests too small learning rate for next epoch, stop learning
+        eval_loss, _ , _ = eval(model, valid_loader, criterion)
+        scheduler.step(eval_loss) # use the learning rate scheduler
+        curr_lr = optimizer.param_groups[0]['lr']
+        print('Learning rate : {}'.format(curr_lr))
+        if curr_lr < 1e-5:
+            print ("Early stopping\n\n")
+            break
+
+def eval(model,valid_loader,criterion):
+
+    eval_loss = 0.0
+    output_all = []
+    label_all = []
+
+    for i, data in enumerate(valid_loader):
+        model.eval()
+        audio = data['mel']
+        label = data['label']
+        # have to convert to an autograd.Variable type in order to keep track of the gradient...
+        audio = Variable(audio).type(torch.FloatTensor)
+        label = Variable(label).type(torch.LongTensor)
+        outputs = model(audio)
+        loss = criterion(outputs, label)
+
+        eval_loss += loss.data[0]
+
+        output_all.append(outputs.data.numpy())
+        label_all.append(label.data.numpy())
+
+    avg_loss = eval_loss/len(valid_loader)
+    print ('Average loss: {:.4f} \n'. format(avg_loss))
+
+    return avg_loss, output_all, label_all
+
 
 # read train / valid / test lists
 y_train_dict = {}
@@ -117,8 +163,6 @@ for iter in range(len(test_list)):
     x_test[iter] = np.load(mel_path + test_list[iter].replace('.wav','.npy'))
     y_test[iter] = y_test_dict[test_list[iter]]
 
-
-
 # normalize the mel spectrograms
 mean = np.mean(x_train)
 std = np.std(x_train)
@@ -128,9 +172,6 @@ x_valid -= mean
 x_valid /= std
 x_test -= mean
 x_test /= std
-
-
-
 
 print(x_train.shape,y_train.shape)
 
@@ -142,119 +183,11 @@ train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, drop_
 valid_loader = DataLoader(valid_data, batch_size=batch_size, shuffle=True, drop_last = True)
 test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=True, drop_last=True)
 
-# model class
-class model_1DCNN(nn.Module):
-    def __init__(self):
-        super(model_1DCNN, self).__init__()
-
-        self.conv0 = nn.Sequential(
-            nn.Conv1d(128, 32, kernel_size=8, stride=1, padding=0),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.MaxPool1d(8, stride=8))
-
-        self.conv1 = nn.Sequential(
-            nn.Conv1d(32, 32, kernel_size=8, stride=1, padding=0),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.MaxPool1d(8, stride=8))
-
-        self.conv2 = nn.Sequential(
-            nn.Conv1d(32, 64, kernel_size=4, stride=1, padding=0),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.MaxPool1d(4, stride=4))
-
-        self.fc0 = nn.Linear(256, 64)
-        self.fc1 = nn.Linear(64, 10)
-        #self.activation = nn.Softmax()
-
-    def forward(self,x):
-        # input x: minibatch x 128 x 12XX
-
-        #print(x.size())
-        #x = x.view(x.size(0),x.size(2),x.size(1))
-        # now x: minibatch x 12XX x 128
-
-        out = self.conv0(x)
-        out = self.conv1(out)
-        out = self.conv2(out)
-
-        #print(out.size())
-        # flatten the out so that the fully connected layer can be connected from here
-        out = out.view(x.size(0), out.size(1) * out.size(2))
-        out = self.fc0(out)
-        out = self.fc1(out)
-        #out = self.activation(out)
-
-        return out
-
-# train / eval
-def fit(model,train_loader,valid_loader,criterion,learning_rate,num_epochs):
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=1e-6, momentum=0.9, nesterov=True)
-    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=3, verbose=True)
-
-    for epoch in range(num_epochs):
-        model.train()
-        acc = []
-
-        for i, data in enumerate(train_loader):
-            audio = data['mel']
-            label = data['label']
-            # have to convert to an autograd.Variable type in order to keep track of the gradient...
-            audio = Variable(audio).type(torch.FloatTensor)
-            label = Variable(label).type(torch.LongTensor)
-
-            optimizer.zero_grad()
-            outputs = model(audio)
-
-            #print(outputs,label)
-
-            loss = criterion(outputs, label)
-            loss.backward()
-            optimizer.step()
-
-            if (i+1) % 10 == 0:
-                print ("Epoch [%d/%d], Iter [%d/%d] loss : %.4f" % (epoch+1, num_epochs, i+1, len(train_loader), loss.data[0]))
-
-        eval_loss, _ , _ = eval(model, valid_loader, criterion)
-        scheduler.step(eval_loss) # use the learning rate scheduler
-        curr_lr = optimizer.param_groups[0]['lr']
-        print('Learning rate : {}'.format(curr_lr))
-        if curr_lr < 1e-5:
-            print ("Early stopping\n\n")
-            break
-
-def eval(model,valid_loader,criterion):
-
-    eval_loss = 0.0
-    output_all = []
-    label_all = []
-
-    for i, data in enumerate(valid_loader):
-        model.eval()
-        audio = data['mel']
-        label = data['label']
-        # have to convert to an autograd.Variable type in order to keep track of the gradient...
-        audio = Variable(audio).type(torch.FloatTensor)
-        label = Variable(label).type(torch.LongTensor)
-        outputs = model(audio)
-        loss = criterion(outputs, label)
-
-        eval_loss += loss.data[0]
-
-        output_all.append(outputs.data.numpy())
-        label_all.append(label.data.numpy())
-
-    avg_loss = eval_loss/len(valid_loader)
-    print ('Average loss: {:.4f} \n'. format(avg_loss))
 
 
-
-    return avg_loss, output_all, label_all
 
 # load model
-model = model_1DCNN()
+model = model.model_1DCNN()
 
 # training
 criterion = nn.CrossEntropyLoss()
