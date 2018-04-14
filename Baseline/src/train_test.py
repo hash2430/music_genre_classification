@@ -180,19 +180,14 @@ train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, drop_
 valid_loader = DataLoader(valid_data, batch_size=batch_size, shuffle=True, drop_last = True)
 test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=True, drop_last=True)
 
-
-
-
 # load model
 model = model.model_1DCNN()
 
-# training
+# training & validation
 criterion = nn.CrossEntropyLoss()
-
-# run
 fit(model,train_loader,valid_loader,criterion,learning_rate,num_epochs)
 
-# evaluation
+# test
 avg_loss, output_all, label_all = eval(model,test_loader,criterion)
 #print(len(output_all),output_all[0].shape,avg_loss)
 
