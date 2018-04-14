@@ -6,10 +6,7 @@
 #
 
 from __future__ import print_function
-import sys
-import os
 import numpy as np
-import random
 
 import torch
 from torch.utils.data import DataLoader
@@ -18,8 +15,8 @@ import torch.nn as nn
 from torch.autograd import Variable
 from torch.optim import lr_scheduler
 
-import Baseline.model as model
-from Baseline.gtzandata import gtzandata
+import Baseline.src.model as model
+from Baseline.src.gtzandata import gtzandata
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.enabled = True
 
